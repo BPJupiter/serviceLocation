@@ -7,11 +7,15 @@
 
 #pragma comment(lib, "ws2_32.lib")
 
+#define PACKET_SIZE 64
+
 typedef struct {
 	unsigned char icmp_type;
 	unsigned char icmp_code;
 	unsigned short icmp_sum;
-	unsigned int icmp_rest;
+	unsigned short icmp_id;
+	unsigned short icmp_seq;
+	unsigned long timestamp; //Not part of ICMP
 }icmphdr;
 
 typedef struct {
@@ -27,32 +31,50 @@ typedef struct {
 	unsigned int		ip_dst;
 }iphdr;
 
-uint16_t checksum(uint16_t* addr, int len) {
-	int count = len;
-	register uint32_t sum = 0;
-	uint16_t answer = 0;
+uint16_t checksum(uint16_t* buffer, int size) {
+	unsigned long cksum = 0;
 
-	while (count > 1) {
-		sum += *(addr++);
-		count -= 2;
+	// Sum all the words together, adding the final byte if size is odd
+	while (size > 1) {
+		cksum += *buffer++;
+		size -= sizeof(USHORT);
+	}
+	if (size) {
+		cksum += *(UCHAR*)buffer;
 	}
 
-	if (count > 0) {
-		sum += *(uint8_t*)addr;
+	// Do a little shuffling
+	cksum = (cksum >> 16) + (cksum & 0xffff);
+	cksum += (cksum >> 16);
+
+	// Return the bitwise complement of the resulting mishmash
+	return (USHORT)(~cksum);
+}
+
+int get_external_ip(in_addr* ipBuff) {
+	char hn[80];
+	if (gethostname(hn, sizeof(hn)) == SOCKET_ERROR) {
+		printf("Could not get local hostname! Error: %ld\n", WSAGetLastError());
+		return 1;
+	}
+	struct hostent *phe = gethostbyname(hn);
+	if (phe == 0) {
+		printf("Bad host lookup.\n");
+		return 1;
 	}
 
-	while (sum >> 16) {
-		sum = (sum & 0xffff) + (sum >> 16);
+	if (sizeof(phe->h_addr_list) == 0) {
+		printf("No connection!");
+		return 1;
 	}
 
-	answer = ~sum;
-
-	return answer;
+	memcpy(ipBuff, phe->h_addr_list[0], sizeof(struct in_addr));
 }
 
 int run(int argc, char** argv) {
-	char datagram[4096];
-	char incoming[4096];
+	char sendBuf[PACKET_SIZE]; memset(sendBuf, 0, sizeof(sendBuf));
+	char recvBuf[1024]; memset(recvBuf, 0, sizeof(recvBuf));
+	int ttl = 30;
 
 	//Create raw socket.
 	SOCKET rSock = socket(AF_INET, SOCK_RAW, IPPROTO_ICMP);
@@ -63,41 +85,32 @@ int run(int argc, char** argv) {
 	
 	BOOL bOptVal = TRUE;
 	//Allow modification of IP header.
-	if (setsockopt(rSock, IPPROTO_IP, IP_HDRINCL, (char*)&bOptVal, sizeof(BOOL)) == SOCKET_ERROR) {
+	//if (setsockopt(rSock, IPPROTO_IP, IP_HDRINCL, (char*)&bOptVal, sizeof(BOOL)) == SOCKET_ERROR) {
+	if (setsockopt(rSock, IPPROTO_IP, IP_TTL, (const char*)&ttl, sizeof(ttl)) == SOCKET_ERROR) {
 		printf("Error setting socket options! Error: %ld\n", WSAGetLastError());
 		return 1;
 	}
 
-	/*
-	//Get local ip address.
-	sockaddr_in saServer;
-	hostent* localHost;
-	char* localIP;
-	localHost = gethostbyname("");
-	localIP = inet_ntoa(*(struct in_addr*)*localHost->h_addr_list);
-
-	saServer.sin_family = AF_INET;
-	saServer.sin_addr.s_addr = inet_addr(localIP);
-	saServer.sin_port = htons(33434);
-
-	if (bind(rSock, (SOCKADDR*)&saServer, sizeof (saServer)) == SOCKET_ERROR) {
-		printf("Error binding local address to socket! Error: %ld\n", WSAGetLastError());
-		return 1;
-	}
-	undiagnosed adhd function. fix later*/ 
-
 	//Construct headers
-	iphdr* iph = (iphdr*)datagram;
-	icmphdr* icmph = (icmphdr*)(datagram + sizeof(iphdr));
+	//iphdr* iph = (iphdr*)sendBuf;
+	//icmphdr* icmph = (icmphdr*)(sendBuf + sizeof(iphdr));
+	icmphdr* icmph = (icmphdr*)sendBuf;
 
 	const char* msg = "Transgender pinging you!";
 
-	memcpy(datagram + sizeof (iphdr) + sizeof (icmphdr), msg, strlen(msg) + 1);
-	sockaddr_in sendTo;
+	//memcpy(sendBuf + sizeof (iphdr) + sizeof (icmphdr), msg, strlen(msg) + 1);
+	memcpy(sendBuf + sizeof(icmphdr), msg, strlen(msg) + 1);
+	sockaddr_in dest, source;
+	in_addr srcAddr;
 
-	sendTo.sin_family = AF_INET;
-	sendTo.sin_port = htons(33434);
-	inet_pton(AF_INET, "127.0.0.1", &sendTo.sin_addr);
+	if (get_external_ip(&srcAddr) == 1)
+		return 1;
+
+	dest.sin_family = AF_INET;
+	dest.sin_port = htons(33434);
+	inet_pton(AF_INET, argv[1], &dest.sin_addr);
+
+	/*
 	
 	iph->ip_hl = 5;
 	iph->ip_v = 4;
@@ -105,28 +118,41 @@ int run(int argc, char** argv) {
 	iph->ip_len = sizeof (iphdr) + sizeof (icmphdr);
 	iph->ip_id = 1;
 	iph->ip_off = 0;
-	iph->ip_ttl = 255;
+	iph->ip_ttl = 30;
 	iph->ip_p = 1;
 	iph->ip_sum = 0;
-	inet_pton(AF_INET, "127.0.0.1", &iph->ip_src);
-	iph->ip_dst = sendTo.sin_addr.s_addr;
+	inet_pton(AF_INET, inet_ntoa(srcAddr), &iph->ip_src);
+	iph->ip_dst = dest.sin_addr.s_addr;
+	*/
 
-	icmph->icmp_type = 8;
+	icmph->icmp_type = 8; //ICMP_ECHO_REQUEST
 	icmph->icmp_code = 0;
 	icmph->icmp_sum = 0;
-	icmph->icmp_rest = 0;
+	icmph->icmp_id = (USHORT)GetCurrentProcessId();
+	icmph->icmp_seq = 0;
+	icmph->timestamp = GetTickCount();
 
-	iph->ip_sum = checksum((unsigned short*)&iph, sizeof (iphdr));
-	icmph->icmp_sum = checksum((unsigned short*)&icmph, sizeof (icmph));
+	//iph->ip_sum = checksum((unsigned short*)&iph, sizeof (iphdr));
+	icmph->icmp_sum = checksum((unsigned short*)icmph, sizeof (sendBuf));
 
-	int val = sendto(rSock, datagram, sizeof (datagram), 0, (sockaddr*)&sendTo, sizeof(sendTo));
-	if (val == -1) {
+	printf("Sending packet to %s.\n", inet_ntoa(dest.sin_addr));
+	int val = sendto(rSock, sendBuf, sizeof (sendBuf), 0, (sockaddr*)&dest, sizeof(dest));
+	if (val == SOCKET_ERROR) {
 		printf("Failed to send packet! Error: %ld\n", WSAGetLastError());
 		return 1;
 	}
 	printf("%ld bytes sent.\n", val);
-	
 
+	int fromlen = sizeof(source);
+	if (recvfrom(rSock, recvBuf, 1024, 0, (sockaddr*)&source, &fromlen) == SOCKET_ERROR) {
+		printf("Error receiving packets!");
+		if (WSAGetLastError() == WSAEMSGSIZE) {
+			printf("Buffer too small!\n");
+		} else
+			printf("Error: %ld", WSAGetLastError());
+		return 1;
+	}
+	printf("Recieved response!\n");
 
 	return 0;
 }
