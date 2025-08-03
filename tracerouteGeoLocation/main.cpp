@@ -3,6 +3,7 @@
 #include <winsock2.h>
 #include <stdio.h>
 #include <Ws2tcpip.h>
+#include <mstcpip.h>
 #include <stdint.h>
 
 #pragma comment(lib, "ws2_32.lib")
@@ -56,7 +57,7 @@ uint16_t checksum(uint16_t* buffer, int size) {
 	return (USHORT)(~cksum);
 }
 
-int get_external_ip(in_addr* ipBuff) {
+int get_external_ip(char* ipBuff) {
 	char hn[80];
 	if (gethostname(hn, sizeof(hn)) == SOCKET_ERROR) {
 		printf("Could not get local hostname! Error: %ld\n", WSAGetLastError());
@@ -73,12 +74,37 @@ int get_external_ip(in_addr* ipBuff) {
 		return 1;
 	}
 
-	memcpy(ipBuff, phe->h_addr_list[0], sizeof(struct in_addr));
+	memcpy(ipBuff, phe->h_addr_list[0], 32);
+	return 0;
+}
+
+int construct_header(char* sendBuf, int sendBufSize, char* destAddr, int seq_no, sockaddr_in* dest) {
+	//Construct header
+	icmphdr* sicmph = (icmphdr*)sendBuf;
+
+	const char* msg = "Transgender pinging you!";
+
+	memcpy(sendBuf + sizeof(icmphdr), msg, strlen(msg) + 1);
+
+	dest->sin_family = AF_INET;
+	dest->sin_port = htons(33434);
+	inet_pton(AF_INET, (PCSTR)destAddr, &(dest->sin_addr));
+
+	sicmph->icmp_type = ICMP_ECHO_REQUEST;
+	sicmph->icmp_code = 0;
+	sicmph->icmp_sum = 0;
+	sicmph->icmp_id = (USHORT)GetCurrentProcessId();
+	sicmph->icmp_seq = seq_no;
+	sicmph->timestamp = GetTickCount();
+
+	sicmph->icmp_sum = checksum((unsigned short*)sicmph, sendBufSize);
+	return 0;
 }
 
 int run(int argc, char** argv) {
 	char sendBuf[PACKET_SIZE]; memset(sendBuf, 0, sizeof(sendBuf));
 	char recvBuf[1024]; memset(recvBuf, 0, sizeof(recvBuf));
+	sockaddr_in dest, from, source;
 	int ttl = 30;
 	int seq_no = 0;
 	if (argc > 2) {
@@ -88,45 +114,53 @@ int run(int argc, char** argv) {
 	}
 
 	//Create raw socket.
-	SOCKET rSock = socket(AF_INET, SOCK_RAW, IPPROTO_ICMP);
-	if (rSock == INVALID_SOCKET) {
+	SOCKET sSock = socket(AF_INET, SOCK_RAW, IPPROTO_ICMP);
+	if (sSock == INVALID_SOCKET) {
 		printf("Socket could not be created. Error: %ld\n", WSAGetLastError());
 		return 1;
 	}
+
+	/*
+	memset(&source, 0, sizeof(source));
+	source.sin_family = AF_INET;
+	source.sin_port = 0;
+	char srcAddr[32];
+	if (get_external_ip(srcAddr) == 1) {
+		printf("Could not get external facing source ip address!\n");
+		return 1;
+	}
+	source.sin_addr.S_un.S_addr = inet_addr(srcAddr);
+	//Bind socket.
+	if (bind(sSock, (sockaddr*)&source, sizeof(source)) == SOCKET_ERROR) {
+		printf("Error binding socket to %s! Error: %ld", srcAddr, WSAGetLastError());
+		return 1;
+	}*/
 	
+	/*
+	//Enable promiscuous mode
+	RCVALL_VALUE optval = RCVALL_ON;
+	DWORD bytesReturned;
+	if (WSAIoctl(sSock, SIO_RCVALL, &optval, sizeof(optval), NULL, 0, &bytesReturned, NULL, NULL) == SOCKET_ERROR) {
+		printf("Setting promiscuous mode failed! Error: %ld\n", WSAGetLastError());
+		return 1;
+	}*/
+
 	//Set ttl.
-	if (setsockopt(rSock, IPPROTO_IP, IP_TTL, (const char*)&ttl, sizeof(ttl)) == SOCKET_ERROR) {
+	if (setsockopt(sSock, IPPROTO_IP, IP_TTL, (const char*)&ttl, sizeof(ttl)) == SOCKET_ERROR) {
 		printf("Error setting socket options! Error: %ld\n", WSAGetLastError());
 		return 1;
 	}
 
-	//Construct header
-	icmphdr* sicmph = (icmphdr*)sendBuf;
-
-	const char* msg = "Transgender pinging you!";
-
-	memcpy(sendBuf + sizeof(icmphdr), msg, strlen(msg) + 1);
-	sockaddr_in dest, from;
-	in_addr srcAddr;
-
-	if (get_external_ip(&srcAddr) == 1)
+	DWORD timeout = 3 * 1000;
+	if (setsockopt(sSock, SOL_SOCKET, SO_RCVTIMEO, (const char*)&timeout, sizeof(timeout)) == SOCKET_ERROR) {
+		printf("Could not set timeout value! Error: %ld", WSAGetLastError());
 		return 1;
+	}
 
-	dest.sin_family = AF_INET;
-	dest.sin_port = htons(33434);
-	inet_pton(AF_INET, argv[1], &dest.sin_addr);
-
-	sicmph->icmp_type = ICMP_ECHO_REQUEST;
-	sicmph->icmp_code = 0;
-	sicmph->icmp_sum = 0;
-	sicmph->icmp_id = (USHORT)GetCurrentProcessId();
-	sicmph->icmp_seq = seq_no;
-	sicmph->timestamp = GetTickCount();
-
-	sicmph->icmp_sum = checksum((unsigned short*)sicmph, sizeof (sendBuf));
-
+	construct_header(sendBuf,sizeof(sendBuf), argv[1], seq_no, &dest);
+	
 	printf("Sending packet to %s.\n", inet_ntoa(dest.sin_addr));
-	int val = sendto(rSock, sendBuf, sizeof (sendBuf), 0, (sockaddr*)&dest, sizeof(dest));
+	int val = sendto(sSock, sendBuf, sizeof (sendBuf), 0, (sockaddr*)&dest, sizeof(dest));
 	if (val == SOCKET_ERROR) {
 		printf("Failed to send packet! Error: %ld\n", WSAGetLastError());
 		return 1;
@@ -134,15 +168,15 @@ int run(int argc, char** argv) {
 	printf("%ld bytes sent.\n", val);
 
 	int fromlen = sizeof(from);
-	if (recvfrom(rSock, recvBuf, 1024, 0, (sockaddr*)&from, &fromlen) == SOCKET_ERROR) {
+	if (recvfrom(sSock, recvBuf, 1024, 0, (sockaddr*)&from, &fromlen) == SOCKET_ERROR) {
 		printf("Error receiving packets!");
 		if (WSAGetLastError() == WSAEMSGSIZE) {
-			printf("Buffer too small!\n");
+			printf(" Buffer too small!\n");
 		} else
-			printf("Error: %ld", WSAGetLastError());
+			printf(" Error: %ld\n", WSAGetLastError());
 		return 1;
 	}
-
+	printf("Recieved packet!\n");
 	iphdr* riph = (iphdr*)recvBuf;
 	unsigned short rhlen = riph->ip_hl*4;
 	icmphdr* ricmph = (icmphdr*)(recvBuf + rhlen);
@@ -167,22 +201,13 @@ int run(int argc, char** argv) {
 	if (ricmph->icmp_id != (USHORT)GetCurrentProcessId());
 		// Code to ignore packet from another pinger program.
 
-	int nHops = int(256 - riph->ip_ttl);
-	if (nHops == 192)
-		// TTL 64, so ping was probably to a host on the LAN.
-		// Call it a single hop.
-		nHops = 1;
+	int nHops = int(125 - riph->ip_ttl);
 
-	else if (nHops == 128) {
-		//Probably localHost
-		nHops = 0;
-	}
-
-	printf("\n %d bytes from %s, icmp_seq, ", PACKET_SIZE, inet_ntoa(from.sin_addr), ricmph->icmp_seq);
+	printf("\n%d bytes from %s, icmp_seq, %d", PACKET_SIZE, inet_ntoa(from.sin_addr), ricmph->icmp_seq);
 	if (ricmph->icmp_type == ICMP_TTL_EXPIRE)
 		printf("TTL Expired.\n");
 	else {
-		printf("%d hops", nHops);
+		printf(", %d hops", nHops);
 		printf(", time: %ld ms", GetTickCount() - ricmph->timestamp);
 	}
 
