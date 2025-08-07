@@ -1,12 +1,17 @@
 #define _WINSOCK_DEPRECATED_NO_WARNINGS
 
-#include <winsock2.h>
+#include <sys/socket.h>
+#include <sys/types.h>
+#include <netinet/in.h>
+#include <unistd.h>
+#include <errno.h>
+#include <netdb.h>
+#include <arpa/inet.h>
 #include <stdio.h>
-#include <Ws2tcpip.h>
-#include <mstcpip.h>
 #include <stdint.h>
-
-#pragma comment(lib, "ws2_32.lib")
+#include <string.h>
+#include <time.h>
+#include <math.h>
 
 #define PACKET_SIZE 64
 
@@ -22,7 +27,7 @@ typedef struct {
 	unsigned short icmp_id;
 	unsigned short icmp_seq;
 	unsigned long timestamp; //Not part of ICMP
-}icmphdr;
+}icmphdr; /* 0x0010 */
 
 typedef struct {
 	unsigned char		ip_hl : 4, ip_v : 4;
@@ -35,7 +40,31 @@ typedef struct {
 	unsigned short int  ip_sum;
 	unsigned int		ip_src;
 	unsigned int		ip_dst;
-}iphdr;
+}iphdr; /* 0x0014 */
+
+typedef struct {
+    unsigned int size;
+    char src_addr[16];
+    unsigned char seq_no;
+    unsigned char hops;
+    unsigned int rtt_ms;
+    unsigned char icmp_type;
+}replyInfo;
+
+long get_tick_count() {
+    long    ms;
+    time_t  s;
+    timespec spec;
+	clock_gettime(CLOCK_REALTIME, &spec);
+    s = spec.tv_sec;
+    ms = round(spec.tv_nsec / 1.0e6);
+    if (ms > 999) {
+        s++;
+        ms = 0;
+    }
+    ms += s * 1000;
+    return ms;
+}
 
 uint16_t checksum(uint16_t* buffer, int size) {
 	unsigned long cksum = 0;
@@ -43,10 +72,10 @@ uint16_t checksum(uint16_t* buffer, int size) {
 	// Sum all the words together, adding the final byte if size is odd
 	while (size > 1) {
 		cksum += *buffer++;
-		size -= sizeof(USHORT);
+		size -= sizeof(unsigned short);
 	}
 	if (size) {
-		cksum += *(UCHAR*)buffer;
+		cksum += *(unsigned char*)buffer;
 	}
 
 	// Do a little shuffling
@@ -54,13 +83,13 @@ uint16_t checksum(uint16_t* buffer, int size) {
 	cksum += (cksum >> 16);
 
 	// Return the bitwise complement of the resulting mishmash
-	return (USHORT)(~cksum);
+	return (unsigned short)(~cksum);
 }
 
 int get_external_ip(char* ipBuff) {
 	char hn[80];
-	if (gethostname(hn, sizeof(hn)) == SOCKET_ERROR) {
-		printf("Could not get local hostname! Error: %ld\n", WSAGetLastError());
+	if (gethostname(hn, sizeof(hn)) == -1) {
+		printf("Could not get local hostname! Error: %s\n", strerror(errno));
 		return 1;
 	}
 	struct hostent *phe = gethostbyname(hn);
@@ -88,17 +117,66 @@ int construct_header(char* sendBuf, int sendBufSize, char* destAddr, int seq_no,
 
 	dest->sin_family = AF_INET;
 	dest->sin_port = htons(33434);
-	inet_pton(AF_INET, (PCSTR)destAddr, &(dest->sin_addr));
+	inet_pton(AF_INET, destAddr, &(dest->sin_addr));
 
 	sicmph->icmp_type = ICMP_ECHO_REQUEST;
 	sicmph->icmp_code = 0;
 	sicmph->icmp_sum = 0;
-	sicmph->icmp_id = (USHORT)GetCurrentProcessId();
+	sicmph->icmp_id = (unsigned short)getpid();
 	sicmph->icmp_seq = seq_no;
-	sicmph->timestamp = GetTickCount();
+    sicmph->timestamp = get_tick_count();
 
 	sicmph->icmp_sum = checksum((unsigned short*)sicmph, sendBufSize);
 	return 0;
+}
+
+int ping(int sock, sockaddr_in dest, int ttl, char* sendBuf, int sendBufSize, char* recvBuf, int recvBufSize, replyInfo* output) {
+    sockaddr_in from;
+    socklen_t fromlen = sizeof(from);
+    long timeSent, timeRecv;
+
+    if (setsockopt(sock, IPPROTO_IP, IP_TTL, (const char*)&ttl, sizeof(ttl)) == -1) {
+        printf("Error setting socket options! Error: %s\n", strerror(errno));
+        return 1;
+    }
+
+    printf("Sending packet to %s.\n", inet_ntoa(dest.sin_addr));
+	int val = sendto(sock, sendBuf, sendBufSize, 0, (sockaddr*)&dest, sizeof(dest));
+    timeSent = get_tick_count();
+	if (val == -1) {
+		printf("Failed to send packet! Error: %s\n", strerror(errno));
+		return 1;
+	}
+	printf("%d bytes sent.\n", val);
+
+    val = recvfrom(sock, recvBuf, recvBufSize, 0, (sockaddr*)&from, &fromlen);
+	if (val == -1) {
+		printf("Error receiving packets!");
+		if (errno == EMSGSIZE) {
+			printf(" Buffer too small!\n");
+		} else
+			printf(" Error: %s\n", strerror(errno));
+		return 1;
+	}
+    timeRecv = get_tick_count();
+	printf("Recieved packet!\n");
+
+    iphdr* riph = (iphdr*)recvBuf;
+	unsigned short rhlen = riph->ip_hl*4;
+	icmphdr* ricmph = (icmphdr*)(recvBuf + rhlen);
+
+    int nHops = int(125 - riph->ip_ttl);
+    if (ricmph->icmp_type == ICMP_TTL_EXPIRE)
+        nHops = int(255 - riph->ip_ttl);
+
+    output->size = val;
+    strncpy(output->src_addr, inet_ntoa(from.sin_addr), 16);
+    output->seq_no = ricmph->icmp_seq;
+    output->hops = nHops;
+    output->rtt_ms = timeRecv - timeSent;
+    output->icmp_type = ricmph->icmp_type;
+
+    return 0;
 }
 
 int run(int argc, char** argv) {
@@ -107,6 +185,8 @@ int run(int argc, char** argv) {
 	sockaddr_in dest, from, source;
 	int ttl = 30;
 	int seq_no = 0;
+    long timeSent, timeRecv;
+
 	if (argc > 2) {
 		int temp = atoi(argv[2]);
 		if (temp != 0)
@@ -114,77 +194,29 @@ int run(int argc, char** argv) {
 	}
 
 	//Create raw socket.
-	SOCKET sSock = socket(AF_INET, SOCK_RAW, IPPROTO_ICMP);
-	if (sSock == INVALID_SOCKET) {
-		printf("Socket could not be created. Error: %ld\n", WSAGetLastError());
+	int sSock = socket(AF_INET, SOCK_RAW, IPPROTO_ICMP);
+	if (sSock == -1) {
+		printf("Socket could not be created. Error: %s\n", strerror(errno));
 		return 1;
 	}
 
-	/*
-	memset(&source, 0, sizeof(source));
-	source.sin_family = AF_INET;
-	source.sin_port = 0;
-	char srcAddr[32];
-	if (get_external_ip(srcAddr) == 1) {
-		printf("Could not get external facing source ip address!\n");
-		return 1;
-	}
-	source.sin_addr.S_un.S_addr = inet_addr(srcAddr);
-	//Bind socket.
-	if (bind(sSock, (sockaddr*)&source, sizeof(source)) == SOCKET_ERROR) {
-		printf("Error binding socket to %s! Error: %ld", srcAddr, WSAGetLastError());
-		return 1;
-	}*/
-	
-	/*
-	//Enable promiscuous mode
-	RCVALL_VALUE optval = RCVALL_ON;
-	DWORD bytesReturned;
-	if (WSAIoctl(sSock, SIO_RCVALL, &optval, sizeof(optval), NULL, 0, &bytesReturned, NULL, NULL) == SOCKET_ERROR) {
-		printf("Setting promiscuous mode failed! Error: %ld\n", WSAGetLastError());
-		return 1;
-	}*/
-
-	//Set ttl.
-	if (setsockopt(sSock, IPPROTO_IP, IP_TTL, (const char*)&ttl, sizeof(ttl)) == SOCKET_ERROR) {
-		printf("Error setting socket options! Error: %ld\n", WSAGetLastError());
+    //Set socket timeout
+	struct timeval timeout;
+    timeout.tv_sec = 5;
+    timeout.tv_usec = 0;
+	if (setsockopt(sSock, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)) == -1) {
+		printf("Could not set timeout value! Error: %s\n", strerror(errno));
 		return 1;
 	}
 
-	DWORD timeout = 3 * 1000;
-	if (setsockopt(sSock, SOL_SOCKET, SO_RCVTIMEO, (const char*)&timeout, sizeof(timeout)) == SOCKET_ERROR) {
-		printf("Could not set timeout value! Error: %ld", WSAGetLastError());
-		return 1;
-	}
+	construct_header(sendBuf, sizeof(sendBuf), argv[1], seq_no, &dest);
+    replyInfo output;
+    ping(sSock, dest, ttl, sendBuf, sizeof(sendBuf), recvBuf, sizeof(recvBuf), &output);
 
-	construct_header(sendBuf,sizeof(sendBuf), argv[1], seq_no, &dest);
-	
-	printf("Sending packet to %s.\n", inet_ntoa(dest.sin_addr));
-	int val = sendto(sSock, sendBuf, sizeof (sendBuf), 0, (sockaddr*)&dest, sizeof(dest));
-	if (val == SOCKET_ERROR) {
-		printf("Failed to send packet! Error: %ld\n", WSAGetLastError());
-		return 1;
-	}
-	printf("%ld bytes sent.\n", val);
-
-	int fromlen = sizeof(from);
-	if (recvfrom(sSock, recvBuf, 1024, 0, (sockaddr*)&from, &fromlen) == SOCKET_ERROR) {
-		printf("Error receiving packets!");
-		if (WSAGetLastError() == WSAEMSGSIZE) {
-			printf(" Buffer too small!\n");
-		} else
-			printf(" Error: %ld\n", WSAGetLastError());
-		return 1;
-	}
-	printf("Recieved packet!\n");
-	iphdr* riph = (iphdr*)recvBuf;
-	unsigned short rhlen = riph->ip_hl*4;
-	icmphdr* ricmph = (icmphdr*)(recvBuf + rhlen);
-
-	if (ricmph->icmp_seq != seq_no)
+	if (output.seq_no != seq_no)
 		printf("Bad sequence number!\n");
 
-	switch (ricmph->icmp_type) {
+	switch (output.icmp_type) {
 	case (ICMP_ECHO_REPLY):
 		break;
 	case (ICMP_DEST_UNREACH):
@@ -198,40 +230,27 @@ int run(int argc, char** argv) {
 		return 1;
 	}
 
-	if (ricmph->icmp_id != (USHORT)GetCurrentProcessId());
-		// Code to ignore packet from another pinger program.
 
-	int nHops = int(125 - riph->ip_ttl);
-
-	printf("\n%d bytes from %s, icmp_seq, %d", PACKET_SIZE, inet_ntoa(from.sin_addr), ricmph->icmp_seq);
-	if (ricmph->icmp_type == ICMP_TTL_EXPIRE)
-		printf("TTL Expired.\n");
-	else {
-		printf(", %d hops", nHops);
-		printf(", time: %ld ms", GetTickCount() - ricmph->timestamp);
-	}
+	printf("\n%d bytes from %s, icmp_seq: %d, ", output.size, output.src_addr, output.seq_no);
+	if (output.icmp_type == ICMP_TTL_EXPIRE)
+		printf("TTL Expired, ");
+	printf("%d hops, ", output.hops);
+    // This method of latency calculation consistently overshoots wireshark's estimate.
+    // I'm not a statistician!
+    // NOTE: May also be WSL. Watch this space.
+    printf("time: %d ms\n", output.rtt_ms);
 
 	return 0;
 }
 
-int __cdecl main(int argc, char **argv) {
+int main(int argc, char **argv) {
 	if (argc < 2) {
 		printf("Usage: %s <host> [ttl]\n", argv[0]);
 		return 1;
 	}
 
-	WSADATA wsaData;
 	int status = 0;
+	status = run(argc, argv);
 
-	if (WSAStartup(0x202, &wsaData) == 0)
-	{
-		status = run(argc, argv);
-		WSACleanup();
-	}
-	else
-	{
-		printf("ERROR: WSA could not start!\n");
-		status = 1;
-	}
 	return status;
 }
