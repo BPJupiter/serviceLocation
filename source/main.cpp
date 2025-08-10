@@ -41,13 +41,13 @@ typedef struct {
 }iphdr; /* 0x0014 */
 
 typedef struct {
-  unsigned int  size;
-  char          src_addr[16];
-  unsigned char seq_no;
-  unsigned char hops;
-  unsigned int  rtt_ms;
-  unsigned char icmp_type;
-}replyInfo;
+  unsigned int  size;         /* 0x0004 */
+  int           rtt_ms;       /* 0x0008 */
+  char          src_addr[16]; /* 0x0018 */
+  char          src_name[128];/* 0x0098 */
+  unsigned char seq_no;       /* 0x0099 */
+  unsigned char icmp_type;    /* 0x009a */
+}replyInfo;                   /* 0x009c */
 
 long get_tick_count() {
   long    ms;
@@ -127,7 +127,7 @@ int construct_header(char* sendBuf, int sendBufSize, char* destAddr, int seq_no,
   return 0;
 }
 
-int print_info(replyInfo output) {
+int print_info(replyInfo output, int hop, int timedOut) {
   switch (output.icmp_type) {
   case (ICMP_ECHO_REPLY):
     break;
@@ -141,63 +141,50 @@ int print_info(replyInfo output) {
     printf("Unknown ICMP packet type!\n");
     return 1;
   }
-
-
-  printf("\n%d bytes from %s, icmp_seq: %d, ", output.size, output.src_addr, output.seq_no);
-  if (output.icmp_type == ICMP_TTL_EXPIRE)
-    printf("TTL Expired, ");
-  printf("%d hops, ", output.hops);
-  // This method of latency calculation consistently overshoots wireshark's estimate.
-  // I'm not a statistician!
-  // NOTE: May also be WSL. Watch this space.
-  printf("time: %d ms\n", output.rtt_ms);
+  printf("Hop %d: ", hop);
+  if (timedOut == 0)
+    printf("%dms from %s (%s)\n", output.rtt_ms, output.src_addr, output.src_name);
+  else
+    printf("*\n");
+  // NOTE: WSL overshoots latency by about 3.9%.
 
   return 0;
 }
 
-int ping(int sock, sockaddr_in dest, int ttl, char* sendBuf, int sendBufSize, char* recvBuf, int recvBufSize, replyInfo* output) {
+int ping(int sock, sockaddr_in dest, int ttl, char* sendBuf, int sendBufSize, char* recvBuf, int recvBufSize, replyInfo* output, int* timedOut) {
   sockaddr_in from;
   socklen_t fromlen = sizeof(from);
   long timeSent, timeRecv;
 
-  if (setsockopt(sock, IPPROTO_IP, IP_TTL, (const char*)&ttl, sizeof(ttl)) == -1) {
+  if (setsockopt(sock, IPPROTO_IP, IP_TTL, &ttl, sizeof(ttl)) == -1) {
     printf("Error setting socket options! Error: %s\n", strerror(errno));
     return 1;
   }
 
-  printf("Sending packet to %s.\n", inet_ntoa(dest.sin_addr));
   int val = sendto(sock, sendBuf, sendBufSize, 0, (sockaddr*)&dest, sizeof(dest));
   timeSent = get_tick_count();
   if (val == -1) {
     printf("Failed to send packet! Error: %s\n", strerror(errno));
     return 1;
   }
-  printf("%d bytes sent.\n", val);
 
   val = recvfrom(sock, recvBuf, recvBufSize, 0, (sockaddr*)&from, &fromlen);
   if (val == -1) {
-    printf("Error receiving packets!");
-    if (errno == EMSGSIZE) {
-      printf(" Buffer too small!\n");
-    } else
-      printf(" Error: %s\n", strerror(errno));
+    *timedOut = 1;
+    output->rtt_ms = -1;
     return 1;
   }
   timeRecv = get_tick_count();
-  printf("Recieved packet!\n");
 
   iphdr* riph = (iphdr*)recvBuf;
   unsigned short rhlen = riph->ip_hl*4;
   icmphdr* ricmph = (icmphdr*)(recvBuf + rhlen);
 
-  int nHops = int(125 - riph->ip_ttl);
-  if (ricmph->icmp_type == ICMP_TTL_EXPIRE)
-    nHops = int(255 - riph->ip_ttl);
-
   output->size = val;
   strncpy(output->src_addr, inet_ntoa(from.sin_addr), 16);
+  if (getnameinfo((sockaddr*)&from, fromlen, output->src_name, 128, NULL, 0, 0) != 0)
+    output->src_name[0] = '\0';
   output->seq_no = ricmph->icmp_seq;
-  output->hops = nHops;
   output->rtt_ms = timeRecv - timeSent;
   output->icmp_type = ricmph->icmp_type;
 
@@ -236,13 +223,14 @@ int run(int argc, char** argv) {
 
   construct_header(sendBuf, sizeof(sendBuf), argv[1], seq_no, &dest);
   replyInfo output;
-  for (int i = 0; i < ttl; i++) {
-    ping(sSock, dest, i, sendBuf, sizeof(sendBuf), recvBuf, sizeof(recvBuf), &output);
-        
+  for (int i = 1; i < ttl; i++) {
+    int timedOut = 0;
+    ping(sSock, dest, i, sendBuf, sizeof(sendBuf), recvBuf, sizeof(recvBuf), &output, &timedOut);
+
     if (output.seq_no != seq_no)
       printf("Bad sequence number!\n");
 
-    if (print_info(output) == 1)
+    if (print_info(output, i, timedOut) == 1)
       return 1;
 
     if (strcmp(output.src_addr, argv[1]) == 0) {
