@@ -1,5 +1,3 @@
-#define _WINSOCK_DEPRECATED_NO_WARNINGS
-
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <netinet/in.h>
@@ -52,18 +50,18 @@ typedef struct {
 }replyInfo;
 
 long get_tick_count() {
-    long    ms;
-    time_t  s;
-    timespec spec;
+  long    ms;
+  time_t  s;
+  timespec spec;
 	clock_gettime(CLOCK_REALTIME, &spec);
-    s = spec.tv_sec;
-    ms = round(spec.tv_nsec / 1.0e6);
-    if (ms > 999) {
-        s++;
-        ms = 0;
-    }
-    ms += s * 1000;
-    return ms;
+  s = spec.tv_sec;
+  ms = round(spec.tv_nsec / 1.0e6);
+  if (ms > 999) {
+      s++;
+      ms = 0;
+  }
+  ms += s * 1000;
+  return ms;
 }
 
 uint16_t checksum(uint16_t* buffer, int size) {
@@ -108,7 +106,6 @@ int get_external_ip(char* ipBuff) {
 }
 
 int construct_header(char* sendBuf, int sendBufSize, char* destAddr, int seq_no, sockaddr_in* dest) {
-	//Construct header
 	icmphdr* sicmph = (icmphdr*)sendBuf;
 
 	const char* msg = "Transgender pinging you!";
@@ -124,32 +121,60 @@ int construct_header(char* sendBuf, int sendBufSize, char* destAddr, int seq_no,
 	sicmph->icmp_sum = 0;
 	sicmph->icmp_id = (unsigned short)getpid();
 	sicmph->icmp_seq = seq_no;
-    sicmph->timestamp = get_tick_count();
+  sicmph->timestamp = get_tick_count();
 
 	sicmph->icmp_sum = checksum((unsigned short*)sicmph, sendBufSize);
 	return 0;
 }
 
+int print_info(replyInfo output) {
+  switch (output.icmp_type) {
+  case (ICMP_ECHO_REPLY):
+    break;
+  case (ICMP_DEST_UNREACH):
+    printf("Destination unreachable!\n");
+    return 1;
+    break;
+  case (ICMP_TTL_EXPIRE):
+    break;
+  default:
+    printf("Unknown ICMP packet type!\n");
+    return 1;
+  }
+
+
+  printf("\n%d bytes from %s, icmp_seq: %d, ", output.size, output.src_addr, output.seq_no);
+  if (output.icmp_type == ICMP_TTL_EXPIRE)
+    printf("TTL Expired, ");
+  printf("%d hops, ", output.hops);
+  // This method of latency calculation consistently overshoots wireshark's estimate.
+  // I'm not a statistician!
+  // NOTE: May also be WSL. Watch this space.
+  printf("time: %d ms\n", output.rtt_ms);
+
+  return 0;
+}
+
 int ping(int sock, sockaddr_in dest, int ttl, char* sendBuf, int sendBufSize, char* recvBuf, int recvBufSize, replyInfo* output) {
-    sockaddr_in from;
-    socklen_t fromlen = sizeof(from);
-    long timeSent, timeRecv;
+  sockaddr_in from;
+  socklen_t fromlen = sizeof(from);
+  long timeSent, timeRecv;
 
-    if (setsockopt(sock, IPPROTO_IP, IP_TTL, (const char*)&ttl, sizeof(ttl)) == -1) {
-        printf("Error setting socket options! Error: %s\n", strerror(errno));
-        return 1;
-    }
+  if (setsockopt(sock, IPPROTO_IP, IP_TTL, (const char*)&ttl, sizeof(ttl)) == -1) {
+      printf("Error setting socket options! Error: %s\n", strerror(errno));
+      return 1;
+  }
 
-    printf("Sending packet to %s.\n", inet_ntoa(dest.sin_addr));
+  printf("Sending packet to %s.\n", inet_ntoa(dest.sin_addr));
 	int val = sendto(sock, sendBuf, sendBufSize, 0, (sockaddr*)&dest, sizeof(dest));
-    timeSent = get_tick_count();
+  timeSent = get_tick_count();
 	if (val == -1) {
 		printf("Failed to send packet! Error: %s\n", strerror(errno));
 		return 1;
 	}
 	printf("%d bytes sent.\n", val);
 
-    val = recvfrom(sock, recvBuf, recvBufSize, 0, (sockaddr*)&from, &fromlen);
+  val = recvfrom(sock, recvBuf, recvBufSize, 0, (sockaddr*)&from, &fromlen);
 	if (val == -1) {
 		printf("Error receiving packets!");
 		if (errno == EMSGSIZE) {
@@ -158,25 +183,25 @@ int ping(int sock, sockaddr_in dest, int ttl, char* sendBuf, int sendBufSize, ch
 			printf(" Error: %s\n", strerror(errno));
 		return 1;
 	}
-    timeRecv = get_tick_count();
+  timeRecv = get_tick_count();
 	printf("Recieved packet!\n");
 
-    iphdr* riph = (iphdr*)recvBuf;
+  iphdr* riph = (iphdr*)recvBuf;
 	unsigned short rhlen = riph->ip_hl*4;
 	icmphdr* ricmph = (icmphdr*)(recvBuf + rhlen);
 
-    int nHops = int(125 - riph->ip_ttl);
-    if (ricmph->icmp_type == ICMP_TTL_EXPIRE)
-        nHops = int(255 - riph->ip_ttl);
+  int nHops = int(125 - riph->ip_ttl);
+  if (ricmph->icmp_type == ICMP_TTL_EXPIRE)
+      nHops = int(255 - riph->ip_ttl);
 
-    output->size = val;
-    strncpy(output->src_addr, inet_ntoa(from.sin_addr), 16);
-    output->seq_no = ricmph->icmp_seq;
-    output->hops = nHops;
-    output->rtt_ms = timeRecv - timeSent;
-    output->icmp_type = ricmph->icmp_type;
+  output->size = val;
+  strncpy(output->src_addr, inet_ntoa(from.sin_addr), 16);
+  output->seq_no = ricmph->icmp_seq;
+  output->hops = nHops;
+  output->rtt_ms = timeRecv - timeSent;
+  output->icmp_type = ricmph->icmp_type;
 
-    return 0;
+  return 0;
 }
 
 int run(int argc, char** argv) {
@@ -185,7 +210,7 @@ int run(int argc, char** argv) {
 	sockaddr_in dest, from, source;
 	int ttl = 30;
 	int seq_no = 0;
-    long timeSent, timeRecv;
+  long timeSent, timeRecv;
 
 	if (argc > 2) {
 		int temp = atoi(argv[2]);
@@ -202,44 +227,29 @@ int run(int argc, char** argv) {
 
     //Set socket timeout
 	struct timeval timeout;
-    timeout.tv_sec = 5;
-    timeout.tv_usec = 0;
+  timeout.tv_sec = 5;
+  timeout.tv_usec = 0;
 	if (setsockopt(sSock, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)) == -1) {
 		printf("Could not set timeout value! Error: %s\n", strerror(errno));
 		return 1;
 	}
 
 	construct_header(sendBuf, sizeof(sendBuf), argv[1], seq_no, &dest);
-    replyInfo output;
-    ping(sSock, dest, ttl, sendBuf, sizeof(sendBuf), recvBuf, sizeof(recvBuf), &output);
+  replyInfo output;
+  for (int i = 0; i < ttl; i++) {
+    ping(sSock, dest, i, sendBuf, sizeof(sendBuf), recvBuf, sizeof(recvBuf), &output);
+        
+	  if (output.seq_no != seq_no)
+		  printf("Bad sequence number!\n");
 
-	if (output.seq_no != seq_no)
-		printf("Bad sequence number!\n");
+    if (print_info(output) == 1)
+      return 1;
 
-	switch (output.icmp_type) {
-	case (ICMP_ECHO_REPLY):
-		break;
-	case (ICMP_DEST_UNREACH):
-		printf("Destination unreachable!\n");
-		return 1;
-		break;
-	case (ICMP_TTL_EXPIRE):
-		break;
-	default:
-		printf("Unknown ICMP packet type!\n");
-		return 1;
-	}
-
-
-	printf("\n%d bytes from %s, icmp_seq: %d, ", output.size, output.src_addr, output.seq_no);
-	if (output.icmp_type == ICMP_TTL_EXPIRE)
-		printf("TTL Expired, ");
-	printf("%d hops, ", output.hops);
-    // This method of latency calculation consistently overshoots wireshark's estimate.
-    // I'm not a statistician!
-    // NOTE: May also be WSL. Watch this space.
-    printf("time: %d ms\n", output.rtt_ms);
-
+    if (strcmp(output.src_addr, argv[1]) == 0) {
+      printf("Final hop!\n");
+      break;
+    }
+  }
 	return 0;
 }
 
