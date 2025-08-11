@@ -127,7 +127,7 @@ int construct_header(char* sendBuf, int sendBufSize, char* destAddr, int seq_no,
   return 0;
 }
 
-int print_info(replyInfo output, int hop, int timedOut) {
+int print_info(replyInfo output, int timedOut) {
   switch (output.icmp_type) {
   case (ICMP_ECHO_REPLY):
     break;
@@ -141,9 +141,9 @@ int print_info(replyInfo output, int hop, int timedOut) {
     printf("Unknown ICMP packet type!\n");
     return 1;
   }
-  printf("Hop %d: ", hop);
+
   if (timedOut == 0)
-    printf("%dms from %s (%s)\n", output.rtt_ms, output.src_addr, output.src_name);
+    printf("%dms ", output.rtt_ms);
   else
     printf("*\n");
   // NOTE: WSL overshoots latency by about 3.9%.
@@ -160,34 +160,40 @@ int ping(int sock, sockaddr_in dest, int ttl, char* sendBuf, int sendBufSize, ch
     printf("Error setting socket options! Error: %s\n", strerror(errno));
     return 1;
   }
+  
+  printf("Hop %d: ", ttl);
+  for (int i = 0; i < 3; i++) {
+    int val = sendto(sock, sendBuf, sendBufSize, 0, (sockaddr*)&dest, sizeof(dest));
+    timeSent = get_tick_count();
+    if (val == -1) {
+      printf("Failed to send packet! Error: %s\n", strerror(errno));
+      return 1;
+    }
 
-  int val = sendto(sock, sendBuf, sendBufSize, 0, (sockaddr*)&dest, sizeof(dest));
-  timeSent = get_tick_count();
-  if (val == -1) {
-    printf("Failed to send packet! Error: %s\n", strerror(errno));
-    return 1;
+    val = recvfrom(sock, recvBuf, recvBufSize, 0, (sockaddr*)&from, &fromlen);
+    if (val == -1) {
+      *timedOut = 1;
+      output->rtt_ms = -1;
+      return 1;
+    }
+    timeRecv = get_tick_count();
+
+    iphdr* riph = (iphdr*)recvBuf;
+    unsigned short rhlen = riph->ip_hl*4;
+    icmphdr* ricmph = (icmphdr*)(recvBuf + rhlen);
+
+    output->size = val;
+    strncpy(output->src_addr, inet_ntoa(from.sin_addr), 16);
+    if (getnameinfo((sockaddr*)&from, fromlen, output->src_name, 128, NULL, 0, 0) != 0)
+      output->src_name[0] = '\0';
+    output->seq_no = ricmph->icmp_seq;
+    output->rtt_ms = timeRecv - timeSent;
+    output->icmp_type = ricmph->icmp_type;
+
+    print_info(*output, *timedOut);
   }
-
-  val = recvfrom(sock, recvBuf, recvBufSize, 0, (sockaddr*)&from, &fromlen);
-  if (val == -1) {
-    *timedOut = 1;
-    output->rtt_ms = -1;
-    return 1;
-  }
-  timeRecv = get_tick_count();
-
-  iphdr* riph = (iphdr*)recvBuf;
-  unsigned short rhlen = riph->ip_hl*4;
-  icmphdr* ricmph = (icmphdr*)(recvBuf + rhlen);
-
-  output->size = val;
-  strncpy(output->src_addr, inet_ntoa(from.sin_addr), 16);
-  if (getnameinfo((sockaddr*)&from, fromlen, output->src_name, 128, NULL, 0, 0) != 0)
-    output->src_name[0] = '\0';
-  output->seq_no = ricmph->icmp_seq;
-  output->rtt_ms = timeRecv - timeSent;
-  output->icmp_type = ricmph->icmp_type;
-
+  printf("from %s (%s)\n", output->src_addr, output->src_name);
+  
   return 0;
 }
 
@@ -229,9 +235,6 @@ int run(int argc, char** argv) {
 
     if (output.seq_no != seq_no)
       printf("Bad sequence number!\n");
-
-    if (print_info(output, i, timedOut) == 1)
-      return 1;
 
     if (strcmp(output.src_addr, argv[1]) == 0) {
       printf("Final hop!\n");
