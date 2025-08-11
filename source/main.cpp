@@ -141,12 +141,10 @@ int print_info(replyInfo output, int timedOut) {
     printf("Unknown ICMP packet type!\n");
     return 1;
   }
-
   if (timedOut == 0)
     printf("%dms ", output.rtt_ms);
   else
-    printf("*\n");
-  // NOTE: WSL overshoots latency by about 3.9%.
+    printf("*    ");
 
   return 0;
 }
@@ -174,25 +172,29 @@ int ping(int sock, sockaddr_in dest, int ttl, char* sendBuf, int sendBufSize, ch
     if (val == -1) {
       *timedOut = 1;
       output->rtt_ms = -1;
-      return 1;
     }
-    timeRecv = get_tick_count();
+    else {
+      *timedOut = 0;
+      timeRecv = get_tick_count();
 
-    iphdr* riph = (iphdr*)recvBuf;
-    unsigned short rhlen = riph->ip_hl*4;
-    icmphdr* ricmph = (icmphdr*)(recvBuf + rhlen);
+      iphdr* riph = (iphdr*)recvBuf;
+      unsigned short rhlen = riph->ip_hl*4;
+      icmphdr* ricmph = (icmphdr*)(recvBuf + rhlen);
 
-    output->size = val;
-    strncpy(output->src_addr, inet_ntoa(from.sin_addr), 16);
-    if (getnameinfo((sockaddr*)&from, fromlen, output->src_name, 128, NULL, 0, 0) != 0)
-      output->src_name[0] = '\0';
-    output->seq_no = ricmph->icmp_seq;
-    output->rtt_ms = timeRecv - timeSent;
-    output->icmp_type = ricmph->icmp_type;
-
+      output->size = val;
+      strncpy(output->src_addr, inet_ntoa(from.sin_addr), 16);
+      if (getnameinfo((sockaddr*)&from, fromlen, output->src_name, 128, NULL, 0, 0) != 0)
+        output->src_name[0] = '\0';
+      output->seq_no = ricmph->icmp_seq;
+      output->rtt_ms = timeRecv - timeSent;
+      output->icmp_type = ricmph->icmp_type;
+    }
     print_info(*output, *timedOut);
   }
-  printf("from %s (%s)\n", output->src_addr, output->src_name);
+  if (*timedOut == 0) 
+    printf("from %s (%s)\n", output->src_addr, output->src_name);
+  else
+    printf("\n");
   
   return 0;
 }
@@ -220,7 +222,7 @@ int run(int argc, char** argv) {
 
     //Set socket timeout
   struct timeval timeout;
-  timeout.tv_sec = 5;
+  timeout.tv_sec = 3;
   timeout.tv_usec = 0;
   if (setsockopt(sSock, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)) == -1) {
     printf("Could not set timeout value! Error: %s\n", strerror(errno));
