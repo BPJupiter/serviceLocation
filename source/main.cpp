@@ -127,7 +127,7 @@ int construct_header(char* sendBuf, int sendBufSize, char* destAddr, int seq_no,
   return 0;
 }
 
-int print_info(replyInfo output, int timedOut) {
+int print_info(replyInfo output) {
   switch (output.icmp_type) {
   case (ICMP_ECHO_REPLY):
     break;
@@ -141,7 +141,7 @@ int print_info(replyInfo output, int timedOut) {
     printf("Unknown ICMP packet type!\n");
     return 1;
   }
-  if (timedOut == 0)
+  if (output.rtt_ms != -1)
     printf("%dms ", output.rtt_ms);
   else
     printf("*    ");
@@ -149,7 +149,7 @@ int print_info(replyInfo output, int timedOut) {
   return 0;
 }
 
-int ping(int sock, sockaddr_in dest, int ttl, char* sendBuf, int sendBufSize, char* recvBuf, int recvBufSize, replyInfo* output, int* timedOut) {
+int ping(int sock, sockaddr_in dest, int ttl, char* sendBuf, int sendBufSize, char* recvBuf, int recvBufSize, replyInfo* output, int* timedOut, int pph) {
   sockaddr_in from;
   socklen_t fromlen = sizeof(from);
   long timeSent, timeRecv;
@@ -160,7 +160,8 @@ int ping(int sock, sockaddr_in dest, int ttl, char* sendBuf, int sendBufSize, ch
   }
   
   printf("Hop %d: ", ttl);
-  for (int i = 0; i < 3; i++) {
+  *timedOut = 1;
+  for (int i = 0; i < pph; i++) {
     int val = sendto(sock, sendBuf, sendBufSize, 0, (sockaddr*)&dest, sizeof(dest));
     timeSent = get_tick_count();
     if (val == -1) {
@@ -170,7 +171,6 @@ int ping(int sock, sockaddr_in dest, int ttl, char* sendBuf, int sendBufSize, ch
 
     val = recvfrom(sock, recvBuf, recvBufSize, 0, (sockaddr*)&from, &fromlen);
     if (val == -1) {
-      *timedOut = 1;
       output->rtt_ms = -1;
     }
     else {
@@ -189,13 +189,13 @@ int ping(int sock, sockaddr_in dest, int ttl, char* sendBuf, int sendBufSize, ch
       output->rtt_ms = timeRecv - timeSent;
       output->icmp_type = ricmph->icmp_type;
     }
-    print_info(*output, *timedOut);
+    print_info(*output);
   }
-  if (*timedOut == 0) 
+  if (*timedOut == 0)
     printf("from %s (%s)\n", output->src_addr, output->src_name);
   else
     printf("\n");
-  
+
   return 0;
 }
 
@@ -204,13 +204,14 @@ int run(int argc, char** argv) {
   char recvBuf[1024]; memset(recvBuf, 0, sizeof(recvBuf));
   sockaddr_in dest, from, source;
   int ttl = 30;
+  int pph = 3;
   int seq_no = 0;
   long timeSent, timeRecv;
 
   if (argc > 2) {
     int temp = atoi(argv[2]);
     if (temp != 0)
-      ttl = temp;
+      pph = temp;
   }
 
   //Create raw socket.
@@ -233,7 +234,7 @@ int run(int argc, char** argv) {
   replyInfo output;
   for (int i = 1; i < ttl; i++) {
     int timedOut = 0;
-    ping(sSock, dest, i, sendBuf, sizeof(sendBuf), recvBuf, sizeof(recvBuf), &output, &timedOut);
+    ping(sSock, dest, i, sendBuf, sizeof(sendBuf), recvBuf, sizeof(recvBuf), &output, &timedOut, pph);
 
     if (output.seq_no != seq_no)
       printf("Bad sequence number!\n");
@@ -247,8 +248,10 @@ int run(int argc, char** argv) {
 }
 
 int main(int argc, char **argv) {
+  setbuf(stdout, NULL);
+
   if (argc < 2) {
-    printf("Usage: %s <host> [ttl]\n", argv[0]);
+    printf("Usage: %s <host> [pph]\n", argv[0]);
     return 1;
   }
 
