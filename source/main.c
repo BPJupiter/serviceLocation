@@ -1,3 +1,7 @@
+/*
+Modified traceroute program by Frances Telfar.
+Compile with -lm
+*/
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <netinet/in.h>
@@ -7,6 +11,7 @@
 #include <arpa/inet.h>
 #include <stdio.h>
 #include <stdint.h>
+#include <stdlib.h>
 #include <string.h>
 #include <time.h>
 #include <math.h>
@@ -54,7 +59,7 @@ typedef struct {
 long get_tick_count() {
   long    ms;
   time_t  s;
-  timespec spec;
+  struct timespec spec;
   clock_gettime(CLOCK_REALTIME, &spec);
   s = spec.tv_sec;
   ms = round(spec.tv_nsec / 1.0e6);
@@ -107,7 +112,7 @@ int get_external_ip(char* ipBuff) {
   return 0;
 }
 
-int construct_header(char* sendBuf, int sendBufSize, char* destAddr, int seq_no, sockaddr_in* dest) {
+int construct_header(char* sendBuf, int sendBufSize, char* destAddr, int seq_no, struct sockaddr_in* dest) {
   icmphdr* sicmph = (icmphdr*)sendBuf;
 
   const char* msg = "Transgender pinging you!";
@@ -151,8 +156,8 @@ int print_info(replyInfo output) {
   return 0;
 }
 
-int ping(int sock, sockaddr_in dest, int ttl, char* sendBuf, int sendBufSize, char* recvBuf, int recvBufSize, replyInfo* output, int* timedOut, int pph) {
-  sockaddr_in from;
+int ping(int sock, struct sockaddr_in dest, int ttl, char* sendBuf, int sendBufSize, char* recvBuf, int recvBufSize, replyInfo* output, int* timedOut, int pph, int show_hops) {
+  struct sockaddr_in from;
   socklen_t fromlen = sizeof(from);
   long timeSent, timeRecv;
   unsigned short min_rtt = -1;
@@ -165,14 +170,14 @@ int ping(int sock, sockaddr_in dest, int ttl, char* sendBuf, int sendBufSize, ch
   printf("Hop %d: ", ttl);
   *timedOut = 1;
   for (int i = 0; i < pph; i++) {
-    int val = sendto(sock, sendBuf, sendBufSize, 0, (sockaddr*)&dest, sizeof(dest));
+    int val = sendto(sock, sendBuf, sendBufSize, 0, (struct sockaddr*)&dest, sizeof(dest));
     timeSent = get_tick_count();
     if (val == -1) {
       printf("Failed to send packet! Error: %s\n", strerror(errno));
       return 1;
     }
 
-    val = recvfrom(sock, recvBuf, recvBufSize, 0, (sockaddr*)&from, &fromlen);
+    val = recvfrom(sock, recvBuf, recvBufSize, 0, (struct sockaddr*)&from, &fromlen);
     if (val == -1) {
       output->rtt_ms = -1;
     }
@@ -186,7 +191,7 @@ int ping(int sock, sockaddr_in dest, int ttl, char* sendBuf, int sendBufSize, ch
 
       output->size = val;
       strncpy(output->src_addr, inet_ntoa(from.sin_addr), 16);
-      if (getnameinfo((sockaddr*)&from, fromlen, output->src_name, 128, NULL, 0, 0) != 0)
+      if (getnameinfo((struct sockaddr*)&from, fromlen, output->src_name, 128, NULL, 0, 0) != 0)
         output->src_name[0] = '\0';
       output->seq_no = ricmph->icmp_seq;
       output->rtt_ms = timeRecv - timeSent;
@@ -194,10 +199,14 @@ int ping(int sock, sockaddr_in dest, int ttl, char* sendBuf, int sendBufSize, ch
 
       min_rtt = MIN(min_rtt, output->rtt_ms);
     }
-    //print_info(*output);
+    if (show_hops)
+      print_info(*output);
   }
-  if (*timedOut == 0)
-    printf("MIN: %ums from %s (%s)\n", min_rtt, output->src_addr, output->src_name);
+  if (*timedOut == 0) {
+    if (!show_hops)
+      printf("MIN: %ums ", min_rtt);
+    printf("from %s (%s)\n", output->src_addr, output->src_name);
+  }
   else
     printf("\n");
 
@@ -207,16 +216,23 @@ int ping(int sock, sockaddr_in dest, int ttl, char* sendBuf, int sendBufSize, ch
 int run(int argc, char** argv) {
   char sendBuf[PACKET_SIZE]; memset(sendBuf, 0, sizeof(sendBuf));
   char recvBuf[1024]; memset(recvBuf, 0, sizeof(recvBuf));
-  sockaddr_in dest, from, source;
+  struct sockaddr_in dest, from, source;
   int ttl = 30;
   int pph = 3;
+  int show_hops = 0;
   int seq_no = 0;
   long timeSent, timeRecv;
 
   if (argc > 2) {
     int temp = atoi(argv[2]);
-    if (temp != 0)
+    if (temp > 0)
       pph = temp;
+  }
+
+  if (argc > 3) {
+    int temp = atoi(argv[3]);
+    if (temp == 0 || temp == 1)
+      show_hops = temp;
   }
 
   //Create raw socket.
@@ -239,7 +255,7 @@ int run(int argc, char** argv) {
   replyInfo output;
   for (int i = 1; i < ttl; i++) {
     int timedOut = 0;
-    ping(sSock, dest, i, sendBuf, sizeof(sendBuf), recvBuf, sizeof(recvBuf), &output, &timedOut, pph);
+    ping(sSock, dest, i, sendBuf, sizeof(sendBuf), recvBuf, sizeof(recvBuf), &output, &timedOut, pph, show_hops);
 
     if (output.seq_no != seq_no)
       printf("Bad sequence number!\n");
@@ -256,7 +272,7 @@ int main(int argc, char **argv) {
   setbuf(stdout, NULL);
 
   if (argc < 2) {
-    printf("Usage: %s <host> [pph]\n", argv[0]);
+    printf("Usage: %s <host> [pph] [show_hops]\n", argv[0]);
     return 1;
   }
 
