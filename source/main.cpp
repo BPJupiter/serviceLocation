@@ -18,6 +18,8 @@
 #define ICMP_TTL_EXPIRE 11
 #define ICMP_ECHO_REQUEST 8
 
+#define MIN(X, Y) (((X) < (Y)) ? (X) : (Y))
+
 typedef struct {
   unsigned char   icmp_type;
   unsigned char   icmp_code;
@@ -153,6 +155,7 @@ int ping(int sock, sockaddr_in dest, int ttl, char* sendBuf, int sendBufSize, ch
   sockaddr_in from;
   socklen_t fromlen = sizeof(from);
   long timeSent, timeRecv;
+  unsigned short min_rtt = -1;
 
   if (setsockopt(sock, IPPROTO_IP, IP_TTL, &ttl, sizeof(ttl)) == -1) {
     printf("Error setting socket options! Error: %s\n", strerror(errno));
@@ -188,11 +191,13 @@ int ping(int sock, sockaddr_in dest, int ttl, char* sendBuf, int sendBufSize, ch
       output->seq_no = ricmph->icmp_seq;
       output->rtt_ms = timeRecv - timeSent;
       output->icmp_type = ricmph->icmp_type;
+
+      min_rtt = MIN(min_rtt, output->rtt_ms);
     }
-    print_info(*output);
+    //print_info(*output);
   }
   if (*timedOut == 0)
-    printf("from %s (%s)\n", output->src_addr, output->src_name);
+    printf("MIN: %ums from %s (%s)\n", min_rtt, output->src_addr, output->src_name);
   else
     printf("\n");
 
