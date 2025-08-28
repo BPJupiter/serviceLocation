@@ -1,3 +1,7 @@
 *.out
 *.i
 *.s
+.venv
+venv
+__pycache__
+htmlcov
