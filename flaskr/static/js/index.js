@@ -2,13 +2,17 @@ require([
     "esri/Map",
     "esri/Graphic",
     "esri/geometry/Circle",
-    "esri/views/MapView"
+    "esri/views/MapView",
+    "esri/widgets/CoordinateConversion",
+    "esri/widgets/Locate"
     ], 
 function (
     Map,
     Graphic,
     Circle,
-    MapView) {
+    MapView,
+    CoordinateConversion,
+    Locate) {
         $(document).ready(function() {
             'use strict';
 
@@ -40,6 +44,21 @@ function (
                     }
                 }
             }))
+
+            let ccWidget = new CoordinateConversion({
+                view: view
+            });
+
+            view.ui.add(ccWidget, "bottom-left");
+
+            let locateWidget = new Locate({
+                view: view,
+                graphic: new Graphic({
+                    symbol: {type: "simple-marker"}
+                })
+            });
+
+            view.ui.add(locateWidget, "bottom-left");
         });
     }
 );

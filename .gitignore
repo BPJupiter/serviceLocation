@@ -2,6 +2,7 @@
 *.i
 *.s
 .venv
+*.Identifier
 venv
 __pycache__
 htmlcov
