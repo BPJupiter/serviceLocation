@@ -6,7 +6,6 @@ require([
     "esri/views/MapView",
     "esri/widgets/CoordinateConversion",
     "esri/widgets/Locate",
-    "esri/form/FormTemplate"
     ], 
 function (
     Map,
