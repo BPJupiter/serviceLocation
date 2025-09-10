@@ -1,4 +1,6 @@
-from flask import Flask, render_template
+from flask import Flask, request, render_template
+from flask import jsonify
+from flaskr.traceroute.ping import Traceroute, get_coords
 
 def create_app():
     app = Flask(__name__)
@@ -6,4 +8,22 @@ def create_app():
     @app.route('/')
     def home():
         return render_template('index.html')
+    
+    @app.route("/ping")
+    def ping():
+        ip = request.args.get('ip')
+        tr = Traceroute()
+        tr.route(ip)
+        return jsonify({"addresses": tr.addrList,
+                        "latencies": tr.pingList})
+
+    @app.route("/locate")
+    def locate():
+        ipArr = request.args.get('ipArr')
+        ipArr = ipArr.split(',')
+        coordArr = list()
+        for ip in ipArr:
+            coordArr.append(get_coords(ip))
+        return jsonify({"coords": coordArr})
+
     return app

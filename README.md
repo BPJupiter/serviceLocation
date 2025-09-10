@@ -1,12 +1,14 @@
 # Determine Service Location
 
-Currently, you can download and compile the file 'ping.c' in flaskr/static/c/.
-Despite the name, it is an implementation of traceroute using ICMP echo requests.
+This server currently requires root access. This is a known security risk.
+## Installation
 ```shell
-$ gcc ping.c -o ping.out -lm
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
 ```
-Usage is:
+
+## Execution
 ```shell
-$ sudo ./ping.out <ipv4addr> [pingsperhop] [show_hops]
+$ flask run
 ```
-root access is required as program uses raw sockets.
