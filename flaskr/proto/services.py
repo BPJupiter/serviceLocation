@@ -6,13 +6,13 @@ current = os.path.dirname(os.path.realpath(__file__))
 parent = os.path.dirname(current)
 sys.path.append(parent)
 from globals import SERV_COORD, OPTIC_SPEED
-
+'''
 def great_circle_distance(lat, lng):
     coords1 = (SERV_COORD.lat, SERV_COORD.lng)
     coords2 = (lat, lng)
 
     return geopy.distance.geodesic(coords1, coords2).km
-
+'''
 def great_circle_distance(city):
     coords1 = (SERV_COORD.lat, SERV_COORD.lng)
     coords2 = city.coords()
