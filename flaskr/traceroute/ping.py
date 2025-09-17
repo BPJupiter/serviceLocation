@@ -13,7 +13,7 @@ class Traceroute:
         validate_ipv4(ipv4Addr)
         self.addr = ipv4Addr
         try:
-            proc = subprocess.Popen(["sudo", "./flaskr/static/c/ping.out", ipv4Addr], stdout=subprocess.PIPE)
+            proc = subprocess.Popen(["sudo", "./flaskr/static/c/ping.out", ipv4Addr, "1"], stdout=subprocess.PIPE)
             while True:
                 s = str(proc.stdout.readline())
                 if s == "b''":
@@ -22,7 +22,7 @@ class Traceroute:
                 ps = s.find("MIN: ") + 5
                 pe = s.find("ms")
                 if ps == -1 + 5 or pe == -1:
-                    self.pingList.append(0)
+                    self.pingList.append(-1)
                 else:
                     self.pingList.append(int(s[ps:pe]))
 

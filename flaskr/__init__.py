@@ -24,6 +24,7 @@ def create_app():
         coordArr = list()
         for ip in ipArr:
             coordArr.append(get_coords(ip))
+        coordArr[0] = get_coords("me")
         return jsonify({"coords": coordArr})
 
     return app

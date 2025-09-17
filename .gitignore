@@ -6,3 +6,7 @@
 venv
 __pycache__
 htmlcov
+.vscode
+node_modules
+package-lock.json
+package.json
