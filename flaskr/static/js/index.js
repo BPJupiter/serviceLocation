@@ -6,7 +6,7 @@ $(document).ready(function() {
         zoom: 1
     });
     load_images();
-    //test_circle();
+
     $('#search').keypress(function (e) {
         if (e.which !== 13) {
             return;
@@ -17,6 +17,14 @@ $(document).ready(function() {
         var search = $('#search').val().trim();
         if (!search) {return;}
         let ip = search
+        if (!validate_ip(ip)) {
+            $('#search').val('');
+            $('#search').attr("placeholder", "Invalid IPv4 address.")
+            return;
+        }
+
+        $('#routeText').attr('style', 'animation: routing 0.7s infinite alternate');
+
         fetch('http://localhost:5000/ping?ip='+ip)
         .then((response) => {
             return response.json();
@@ -98,8 +106,14 @@ $(document).ready(function() {
                 }
                 draw_cities(cities_geojson);
                 draw_lines(lines_geojson);
+                $('#routeText').attr('style', 'animation: idle');
+                $('#completeText').attr('style', 'animation: complete 3s')
             })
         })
+    });
+
+    $('#reset').click(function() {
+        location.reload();
     });
     
     async function load_images() {
@@ -346,6 +360,14 @@ $(document).ready(function() {
             colArr.push("#" + r + g + b)
         }
         return colArr;
+    }
+
+    function validate_ip(ip) {
+        const ipv4 = 
+            /^(\d{1,3}\.){3}\d{1,3}$/;
+        const ipv6 = 
+            /^([0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}$/;
+        return ipv4.test(ip);// || ipv6.test(ip);
     }
     
     function test_circle() {

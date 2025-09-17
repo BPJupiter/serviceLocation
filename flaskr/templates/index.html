@@ -15,11 +15,19 @@
 </head>
 <body>
     <div id="viewDiv"></div>
-    <div id="inputBox">
-        <input id="search" type="text" class="form-control" placeholder="ipv4 addr...">
+    <div id="routeContainer">
+        <div id="inputBox">
+            <input id="search" type="text" class="form-control" placeholder="ipv4 addr...">
+        </div>
+        <div id="resetBox">
+            <button id="reset" type="button">Clear</button>
+        </div>
+        <div id="routeText">
+            <p>Routing...</p>
+        </div>
+        <div id="completeText">
+            <p>Complete.</p>
+        </div>
     </div>
-    <script>
-        const foo = turf.circle([0, 0], 100);
-    </script>
 </body>
 </html>

@@ -10,8 +10,71 @@ html, body {
     width: 100%;
 }
 
-#inputBox {
+@keyframes routing {
+    0% {opacity: 0;}
+    100% {opacity: 1;}
+}
+
+@keyframes idle {}
+
+@keyframes complete {
+    0% {opacity: 1;}
+    80% {opacity: 1;}
+    100% {opacity: 0;}
+}
+
+#routeContainer {
     position: absolute;
     top: 0px;
     left: 0px;
+    height: 80px;
+    width: 250px;
+}
+
+#inputBox {
+    z-index: 50;
+    position: absolute;
+    top: 0px;
+    left: 0px;
+    width: 200px;
+    height: 40px;
+}
+
+#search {
+    width: 200px;
+    height: 40px;
+}
+
+#resetBox {
+    z-index: 50000;
+    float: right;
+    width: 50px;
+    height: 40px;
+}
+
+#reset {
+    z-index: 5000000;
+    position: asbolute;
+    width: 50px;
+    height: 40px;
+}
+
+#routeText {
+    position: absolute;
+    top: 40px;
+    left: 0px;
+    color: red;
+    font-size: 30px;
+    opacity: 0;
+    animation: idle;
+}
+
+#completeText {
+    position: absolute;
+    top: 40px;
+    left: 0px;
+    color: lime;
+    font-size: 30px;
+    opacity: 0;
+    animation: idle;
 }
