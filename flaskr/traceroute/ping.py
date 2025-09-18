@@ -22,6 +22,29 @@ class Traceroute:
         else:
             pass
         try:
+            if False:
+                proc = subprocess.Popen(["sudo", "./flaskr/static/c/ping.out", ipAddr], stdout=subprocess.PIPE)
+                while True:
+                    s = str(proc.stdout.readline())
+                    if s == "b''":
+                        break
+                    self.nHops += 1
+                    ps = s.find("MIN: ") + 5
+                    pe = s.find("ms")
+                    if ps == -1 + 5 or pe == -1:
+                        self.pingList.append(0)
+                    else:
+                        self.pingList.append(int(s[ps:pe]))
+
+                    ads = s.find("from ") + 5
+                    ade = s.find(" (")
+                    if ads == -1 + 5 or ade == -1:
+                        self.addrList.append("")
+                    else:
+                        self.addrList.append(s[ads:ade])
+                self.pingList.pop()
+                self.addrList.pop()
+                return
             n_pings = 3
             command = ["sudo", "traceroute", ipAddr]
             if self.type != "":

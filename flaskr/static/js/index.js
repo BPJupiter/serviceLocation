@@ -6,7 +6,7 @@ $(document).ready(function() {
         zoom: 1
     });
     load_images();
-    //test_lines();
+    // tests
     $('#search').keypress(function (e) {
         if (e.which !== 13) {
             return;
@@ -106,6 +106,10 @@ $(document).ready(function() {
                         continue
                     }
                     var radius = relLatencies[i] * 100;
+                    if (radius > 200 * 100) {
+                        radius = 200 * 100;
+                    }
+                    
                     draw_circle(prev_coords, radius, colourArr[j], i, location_known);
 
                     if (location_known) {
@@ -530,5 +534,11 @@ $(document).ready(function() {
                 }
             });
         });
+    }
+
+    function test_circle_2(ping) {
+        map.on('load', () => {
+            draw_circle([174, -41], ping * 100, '#00FF00', 1, true);
+        })
     }
 })
