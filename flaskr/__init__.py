@@ -12,8 +12,9 @@ def create_app():
     @app.route("/ping")
     def ping():
         ip = request.args.get('ip')
+        type = request.args.get('type')
         tr = Traceroute()
-        tr.route(ip)
+        tr.route(ip, type)
         return jsonify({"addresses": tr.addrList,
                         "latencies": tr.pingList})
 

@@ -22,11 +22,24 @@
         <div id="resetBox">
             <button id="reset" type="button">Clear</button>
         </div>
-        <div id="routeText">
-            <p>Routing...</p>
+        <div id="routingInfo">
+            <p id="routeText">Routing...</p>
+            <p id="completeText">Done!</p>
         </div>
-        <div id="completeText">
-            <p>Complete.</p>
+        <div id="ipInfo">
+            <p id="ipIsLocated">IP location known!</p>
+            <p id="ipNotLocated">
+                Final IP location not known.<br>
+                (Try another packet type?)
+            </p>
+        </div>
+        <div id="options">
+            <label for="packetType">Packet Type:</label>
+            <select name="packetType" id="packetType">
+                <option value="UDP">UDP (Default)</option>
+                <option value="ICMP_ECHO">ICMP_ECHO</option>
+                <option value="TCP_SYN">TCP_SYN</option>
+            </select>
         </div>
     </div>
 </body>

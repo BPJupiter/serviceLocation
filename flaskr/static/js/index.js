@@ -6,7 +6,7 @@ $(document).ready(function() {
         zoom: 1
     });
     load_images();
-
+    //test_lines();
     $('#search').keypress(function (e) {
         if (e.which !== 13) {
             return;
@@ -16,16 +16,18 @@ $(document).ready(function() {
 
         var search = $('#search').val().trim();
         if (!search) {return;}
-        let ip = search
+        var ip = search
         if (!validate_ip(ip)) {
             $('#search').val('');
             $('#search').attr("placeholder", "Invalid IPv4 address.")
             return;
         }
 
+        var type = $('#packetType').find(":selected").val()
+
         $('#routeText').attr('style', 'animation: routing 0.7s infinite alternate');
 
-        fetch('http://localhost:5000/ping?ip='+ip)
+        fetch('http://localhost:5000/ping?ip='+ip+'&type='+type)
         .then((response) => {
             return response.json();
         })
@@ -81,14 +83,22 @@ $(document).ready(function() {
                 let j = 0 //index to colourArr
                 var curr_coords = coordJson.coords[1];
                 var prev_coords = coordJson.coords[0];
-                var city_drawn = false;
+                var location_known = false;
                 add_line(lines_geojson, prev_coords);
                 for (let i = 1; i < nHops; i++) {
-                    if (coordJson.coords[i][0] != null) {
+                    if (coordJson.coords[i] == null) {
+                        location_known = false;
+                    }
+                    else if (coordJson.coords[i][0] != null) {
+                        location_known = true;
                         curr_coords = coordJson.coords[i];
-                        add_city(curr_coords, pingJson.latencies[i], cities_geojson);
-                        city_drawn = true;
-                        add_line(lines_geojson, curr_coords);
+                        if (curr_coords[0] != prev_coords[0] || curr_coords[1] != prev_coords[1]) {
+                            add_city(curr_coords, pingJson.latencies[i], cities_geojson);
+                            add_line(lines_geojson, curr_coords);
+                        }
+                    }
+                    else {
+                        location_known = false;
                     }
                     
                     if (relLatencies[i] == 0) {
@@ -96,18 +106,25 @@ $(document).ready(function() {
                         continue
                     }
                     var radius = relLatencies[i] * 100;
-                    draw_circle(prev_coords, radius, colourArr[j], i, city_drawn);
+                    draw_circle(prev_coords, radius, colourArr[j], i, location_known);
 
-                    if (city_drawn) {
+                    if (location_known) {
                         prev_coords = curr_coords;
                     }
                     
                     j++;
                 }
                 draw_cities(cities_geojson);
+                line_drawing_fix(lines_geojson);
                 draw_lines(lines_geojson);
                 $('#routeText').attr('style', 'animation: idle');
-                $('#completeText').attr('style', 'animation: complete 3s')
+                $('#completeText').attr('style', 'animation: complete 3s');
+                if (pingJson.addresses.at(-1) == ip) {
+                    $('#ipIsLocated').attr('style', 'opacity: 1');
+                }
+                else {
+                    $('#ipNotLocated').attr('style', 'opacity: 1');
+                }
             })
         })
     });
@@ -155,10 +172,11 @@ $(document).ready(function() {
     }
 
     function draw_circle(coords, radius, colour, n, known_position) {
-        var opacity = 0.3;
+        var opacity = 0.5;
         if (known_position) {
             opacity = 0.1;
         }
+
         if (coords[0] == null) {
             return;
         }
@@ -189,16 +207,18 @@ $(document).ready(function() {
                 'fill-opacity': opacity
             }
         });
-        /*
-        map.addLayer({
-            id: 'location-radius-outline-'+n.toString(),
-            type: 'line',
-            source: 'location-radius-'+n.toString(),
-            paint: {
-                'line-color': colour,
-                'line-width': 3
-            }
-        });*/
+
+        if (!known_position) {
+            map.addLayer({
+                id: 'location-radius-outline-'+n.toString(),
+                type: 'line',
+                source: 'location-radius-'+n.toString(),
+                paint: {
+                    'line-color': colour,
+                    'line-width': 3
+                }
+            });
+        }
         function get_max_min_lat(coordArr) {
             latArr = new Array();
             for (let i=0; i < coordArr.length; i++) {latArr.push(coordArr[i][1]);}
@@ -212,7 +232,7 @@ $(document).ready(function() {
         function get_num_rects(coordArr) {
             let jumps = [0,0]; // top, bottom
             let n = 0;
-            //console.log(coordArr);
+            
             for (let i=1; i < coordArr.length; i++) {
                 if (Math.abs(coordArr[i][0] - coordArr[i-1][0]) > 240) {
                     if (coordArr[i][1] > 0) {
@@ -291,9 +311,6 @@ $(document).ready(function() {
     }
 
     function add_line(lines_geojson, coords) {
-        if (coords[0] < 0) {
-            coords[0] += 360;
-        }
         lines_geojson['data']['geometry']['coordinates'].push(coords);
     }
 
@@ -312,6 +329,28 @@ $(document).ready(function() {
                 'line-width': 4
             }
         });
+    }
+
+    function line_drawing_fix(lines_geojson) {
+        let coord_arr = lines_geojson.data.geometry.coordinates;
+        for (let i = 0; i < coord_arr.length; i++) {
+            let point = coord_arr[i];
+            let avg_dist = 0;
+            for (let j = 0; j < coord_arr.length; j++) {
+                let dx = Math.abs(point[0] - coord_arr[j][0]);
+                let dy = Math.abs(point[1] - coord_arr[j][1]);
+                avg_dist += Math.sqrt(dx*dx + dy*dy);
+            }
+            avg_dist /= coord_arr.length-1;
+            if (avg_dist > 180) {
+                if (point[0] < 0) {
+                    lines_geojson.data.geometry.coordinates[i][0] += 360;
+                }
+                else {
+                    lines_geojson.data.geometry.coordinates[i][0] -= 360;
+                }
+            }
+        }
     }
 
     function rgb_spaced(n) {
@@ -368,6 +407,71 @@ $(document).ready(function() {
         const ipv6 = 
             /^([0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}$/;
         return ipv4.test(ip);// || ipv6.test(ip);
+    }
+
+    function test_lines() {
+        console.log("TESTING LINES");
+        map.on('load', () => {
+            var lines_geojson = {
+                'type': 'geojson',
+                'data': {
+                    'type': 'Feature',
+                    'properties': {},
+                    'geometry': {
+                        'type': 'LineString',
+                        'coordinates': []
+                    }
+                }
+            };
+
+            for (let i=-180; i < 180; i++) {
+                lines_geojson['data']['geometry']['coordinates'].push([174, -41]);
+                lines_geojson['data']['geometry']['coordinates'].push([i, 0]);
+            }
+            let coord_arr = lines_geojson.data.geometry.coordinates;
+            for (let i = 0; i < coord_arr.length; i++) {
+                let point = coord_arr[i];
+                let avg_dist = 0;
+                for (let j = 0; j < coord_arr.length; j++) {
+                    let dx = Math.abs(point[0] - coord_arr[j][0]);
+                    let dy = Math.abs(point[1] - coord_arr[j][1]);
+                    avg_dist += Math.sqrt(dx*dx + dy*dy);
+                }
+                avg_dist /= coord_arr.length;
+                if (avg_dist > 180) {
+                    if (point[0] < 0) {
+                        coord_arr[i][0] += 360;
+                    }
+                    else {
+                        coord_arr[i][0] -= 360;
+                    }
+                }
+            }
+            /*
+            lines_geojson['data']['geometry']['coordinates'].push([174, -41]);
+            for (let i=-180; i < 181; i += 5) {
+                let new_coords = [i, (-1 * (i%2))*50];
+                if (i==-180) {
+                    //new_coords[0] += 174;
+                }
+                lines_geojson['data']['geometry']['coordinates'].push(new_coords);
+            }*/
+            console.log(lines_geojson);
+            map.addSource('test',  lines_geojson);
+            map.addLayer({
+                'id': 'test',
+                'type': 'line',
+                'source': 'test',
+                'layout': {
+                    'line-join': 'round',
+                    'line-cap': 'round'
+                },
+                'paint': {
+                    'line-color': '#FFFFFF',
+                    'line-width': 4
+                }
+            });
+        })
     }
     
     function test_circle() {
