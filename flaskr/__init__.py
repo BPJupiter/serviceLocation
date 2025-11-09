@@ -15,8 +15,10 @@ def create_app():
         type = request.args.get('type')
         tr = Traceroute()
         tr.route(ip, type)
-        return jsonify({"addresses": tr.addrList,
+        response = jsonify({"addresses": tr.addrList,
                         "latencies": tr.pingList})
+        response.headers.add('Access-Control-Allow-Origin', '*')
+        return response
 
     @app.route("/locate")
     def locate():
@@ -26,6 +28,8 @@ def create_app():
         for ip in ipArr:
             coordArr.append(get_coords(ip))
         coordArr[0] = get_coords("me")
-        return jsonify({"coords": coordArr})
+        response = jsonify({"coords": coordArr})
+        response.headers.add('Access-Control-Allow-Origin', '*')
+        return response
 
     return app
